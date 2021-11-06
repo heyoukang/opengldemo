@@ -24,7 +24,7 @@ public class MainActivity extends AppCompatActivity {
         mGLSurfaceView = new GLSurfaceView(this);
         if (detectOpenGLES20()) {
             mGLSurfaceView.setEGLContextClientVersion(2);
-            mGLSurfaceView.setRenderer(new GLES20Renderer(this, new Sphere(this)));
+            mGLSurfaceView.setRenderer(new GLES20Renderer(this, new Sphere2(this)));
         }
         setContentView(mGLSurfaceView);
     }

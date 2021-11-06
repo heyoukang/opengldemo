@@ -24,6 +24,7 @@ import javax.microedition.khronos.opengles.GL10;
 
 import static android.opengl.GLES20.GL_CLAMP_TO_EDGE;
 import static android.opengl.GLES20.GL_CULL_FACE;
+import static android.opengl.GLES20.GL_DEPTH_TEST;
 import static android.opengl.GLES20.GL_TEXTURE_2D;
 import static android.opengl.GLES20.GL_TRIANGLES;
 import static android.opengl.GLES20.GL_TRIANGLE_STRIP;
@@ -53,19 +54,15 @@ public class Sphere2 extends BaseShape {
              "varying vec2 v_TextureCoordinates;\n" +
               // 环境光
              "varying vec4 v_Ambient;\n" +
-              // 漫反射光
-             "varying vec4 v_Diffuse;\n" +
-             "uniform vec3 u_LightLocation;\n" +
-             "attribute vec3 a_Normal;\n" +
 
+             "varying vec4 v_Diffuse;\n" +
+             "uniform vec3 uLightLocation;\n" +
+             "attribute vec3 a_Normal;\n" +
              "void main() {\n" +
              "   v_TextureCoordinates = a_TextureCoordinates;\n" +
-             "   v_Ambient = vec4(0.15,0.15,0.15,1.0);\n" +
+//             "   v_Ambient = vec4(0.15,0.15,0.15,1.0);\n" +
+             "   v_Ambient = vec4(1.0,1.0,1.0,1.0);\n" +
              "   gl_Position = u_MVPMatrix * a_Position;\n" +
-
-             "   vec4 diffuseTemp=vec4(0.0,0.0,0.0,0.0);\n" +
-             "   pointLight(normalize(a_Normal), diffuseTemp, u_LightLocation, vec4(0.8,0.8,0.8,1.0));\n" +
-             "   vDiffuse=diffuseTemp;" + //将散射光最终强度传给片元着色器"
              "}\n";
     private String mFragmentShader =
             "precision mediump float;\n" +
@@ -197,6 +194,9 @@ public class Sphere2 extends BaseShape {
 
         // 解除与纹理的绑定，避免用其他的纹理方法意外地改变这个纹理
         glBindTexture(GL_TEXTURE_2D, 0);
+
+        // TODO 真正绘制的时候，是按照顶点顺序绘制的，还是同时绘制 ???
+        GLES20.glEnable(GL_DEPTH_TEST);
         return textureID;
     }
 
@@ -206,11 +206,11 @@ public class Sphere2 extends BaseShape {
         ArrayList<Float> data = new ArrayList<>();
         ArrayList<Float> tmp = new ArrayList<>();
         float sina, cosa, sinb, cosb, sina2, cosa2;
-        float R = 1;
+        float R = 0.3f;
         int step1 = 180 / rings;
 
         Log.e(TAG, "initGlDrawArraysVertex: start ----------------------------");
-        for (int i = 0; i <= 90; i += step1) {
+        for (int i = -90; i <= 90; i += step1) {
             cosa = (float) Math.cos(i * Math.PI / 180);
             sina = (float) Math.sin(i * Math.PI / 180);
             cosa2 = (float) Math.cos((i + step1) * Math.PI / 180);

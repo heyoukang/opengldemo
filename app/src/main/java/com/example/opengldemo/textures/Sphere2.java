@@ -4,6 +4,7 @@ import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.opengl.GLES20;
+import android.opengl.GLES30;
 import android.opengl.GLUtils;
 import android.opengl.Matrix;
 import android.os.SystemClock;
@@ -23,7 +24,6 @@ import javax.microedition.khronos.egl.EGLConfig;
 import javax.microedition.khronos.opengles.GL10;
 
 import static android.opengl.GLES20.GL_CLAMP_TO_EDGE;
-import static android.opengl.GLES20.GL_CULL_FACE;
 import static android.opengl.GLES20.GL_DEPTH_TEST;
 import static android.opengl.GLES20.GL_TEXTURE_2D;
 import static android.opengl.GLES20.GL_TRIANGLES;
@@ -34,7 +34,6 @@ import static android.opengl.GLES20.glBindTexture;
 import static android.opengl.GLES20.glDrawArrays;
 import static android.opengl.GLES20.glDrawElements;
 import static android.opengl.GLES20.glGenerateMipmap;
-import static android.opengl.GLES32.GL_CLAMP_TO_BORDER;
 import static com.example.opengldemo.ShaderUtils.checkGlError;
 
 /**
@@ -46,23 +45,37 @@ public class Sphere2 extends BaseShape {
 
     public static final String A_TEXTURE_COORDINATE = "a_TextureCoordinates";
     public static final String U_TEXTURE_UNIT = "u_TextureUnit";
+    public static final String U_MMATRIX = "u_MMatrix";
     private static final String TAG = "Sphere2";
     private String mVertexShader =
              "uniform mat4 u_MVPMatrix;\n" +
-             "attribute vec4 a_Position;\n" +
+             "attribute vec3 a_Position;\n" +
              "attribute vec2 a_TextureCoordinates;\n" +
              "varying vec2 v_TextureCoordinates;\n" +
               // 环境光
              "varying vec4 v_Ambient;\n" +
-
+              // 2.
+             "uniform mat4 u_MMatrix;\n" + // 模型矩阵
              "varying vec4 v_Diffuse;\n" +
-             "uniform vec3 uLightLocation;\n" +
-             "attribute vec3 a_Normal;\n" +
+             "uniform vec3 u_LightLocation;\n" + //光源位置
+             "attribute vec3 a_Normal;\n" + // 法向量
+             "void pointLight (in vec3 normal, inout vec4 diffuse, in vec3 lightLocation, in vec4 lightDiffuse){\n" +
+             "   vec3 normalTarget = a_Position + normal;\n" +
+             "   vec3 newNormal = (u_MMatrix * vec4(normalTarget, 1)).xyz - (u_MMatrix*vec4(a_Position,1)).xyz;\n" +
+                     "newNormal=normalize(newNormal);\n" +
+                     "vec3 vp= normalize(lightLocation-(u_MMatrix*vec4(a_Position,1)).xyz);\n" +
+                     "vp=normalize(vp);\n" +
+                     "float nDotViewPosition = max(0.0,dot(newNormal,vp));\n" +
+                     "diffuse = lightDiffuse * nDotViewPosition;\n" +
+             "}\n" +
              "void main() {\n" +
+             "   gl_Position = u_MVPMatrix * vec4(a_Position,1);\n" +
              "   v_TextureCoordinates = a_TextureCoordinates;\n" +
-//             "   v_Ambient = vec4(0.15,0.15,0.15,1.0);\n" +
-             "   v_Ambient = vec4(1.0,1.0,1.0,1.0);\n" +
-             "   gl_Position = u_MVPMatrix * a_Position;\n" +
+             "   v_Ambient = vec4(0.35,0.35,0.35,1.0);\n" +
+//             "   v_Ambient = vec4(1.0,1.0,1.0,1.0);\n" +
+             "   vec4 diffuseTemp=vec4(0.0,0.0,0.0,0.0);\n" +
+             "   pointLight(normalize(a_Normal), diffuseTemp, u_LightLocation, vec4(0.8,0.8,0.8,1.0));\n" +
+             "   v_Diffuse = diffuseTemp;\n" +
              "}\n";
     private String mFragmentShader =
             "precision mediump float;\n" +
@@ -80,6 +93,9 @@ public class Sphere2 extends BaseShape {
     private int muMVPMatrixHandle;
     private int maTextureCoordinateHandle;
     private int muTextureUnitHandle;
+    private int muMMatrixHandle;
+    private int muLightLocationHandle;
+    private int maNormalHandle;
 
     private float[] mVertexes;
     private short[] mIndexes;
@@ -120,6 +136,13 @@ public class Sphere2 extends BaseShape {
         checkGlError("glGetAttribLocation maTextureCoordinateHandle");
         muTextureUnitHandle = GLES20.glGetUniformLocation(mProgram, U_TEXTURE_UNIT);
         checkGlError("glGetUniformLocation muTextureUnitHandle");
+        muMMatrixHandle = GLES20.glGetUniformLocation(mProgram, U_MMATRIX);
+        checkGlError("glGetUniformLocation muMMatrixHandle");
+        muLightLocationHandle = GLES20.glGetUniformLocation(mProgram, "u_LightLocation");
+        checkGlError("glGetUniformLocation muLightLocationHandle");
+        maNormalHandle = GLES20.glGetAttribLocation(mProgram, "a_Normal");
+        checkGlError("glGetAttribLocation maNormalHandle");
+
 
         if (USE_GL_DRAW_ARRAYS) {
             initGlDrawArraysVertex();
@@ -299,6 +322,9 @@ public class Sphere2 extends BaseShape {
     @Override
     public void onDrawFrame(GL10 gl10) {
         super.onDrawFrame(gl10);
+        if (mProgram == 0) {
+            return;
+        }
 
         GLES20.glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT | GLES20.GL_DEPTH_BUFFER_BIT);
@@ -313,6 +339,14 @@ public class Sphere2 extends BaseShape {
         Matrix.multiplyMM(mMVPMatrix, 0, mVMatrix, 0, mMMatrix, 0);
         Matrix.multiplyMM(mMVPMatrix, 0, mProjMatrix, 0, mMVPMatrix, 0);
         GLES20.glUniformMatrix4fv(muMVPMatrixHandle, 1, false, mMVPMatrix, 0);
+
+
+        GLES20.glUniformMatrix4fv(muMMatrixHandle, 1, false, mMMatrix, 0);
+        GLES20.glUniform3f(muLightLocationHandle, -4, 0, 1.5f);
+
+        //将顶点法向量数据传入渲染管线
+        GLES20.glVertexAttribPointer(maNormalHandle, 3, GLES30.GL_FLOAT, false, 3 * 4, mVertexFloatBuffer);
+        GLES20.glEnableVertexAttribArray(maNormalHandle);// 启用顶点法向量数据数组
 
         if (USE_GL_DRAW_ARRAYS) {
             glDrawArrays(GL_TRIANGLE_STRIP, 0, mVertexes.length / 3);

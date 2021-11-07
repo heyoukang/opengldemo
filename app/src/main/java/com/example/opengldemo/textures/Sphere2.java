@@ -59,14 +59,18 @@ public class Sphere2 extends BaseShape {
              "varying vec4 v_Diffuse;\n" +
              "uniform vec3 u_LightLocation;\n" + //光源位置
              "attribute vec3 a_Normal;\n" + // 法向量
+
+             "varying vec4 v_FragPosLightSpace;\n" +
+             "uniform mat4 u_LightSpaceMatrix;\n" +
+
              "void pointLight (in vec3 normal, inout vec4 diffuse, in vec3 lightLocation, in vec4 lightDiffuse){\n" +
              "   vec3 normalTarget = a_Position + normal;\n" +
              "   vec3 newNormal = (u_MMatrix * vec4(normalTarget, 1)).xyz - (u_MMatrix*vec4(a_Position,1)).xyz;\n" +
-                     "newNormal=normalize(newNormal);\n" +
-                     "vec3 vp= normalize(lightLocation-(u_MMatrix*vec4(a_Position,1)).xyz);\n" +
-                     "vp=normalize(vp);\n" +
-                     "float nDotViewPosition = max(0.0,dot(newNormal,vp));\n" +
-                     "diffuse = lightDiffuse * nDotViewPosition;\n" +
+             "   newNormal=normalize(newNormal);\n" +
+             "   vec3 vp= normalize(lightLocation-(u_MMatrix*vec4(a_Position,1)).xyz);\n" +
+             "   vp=normalize(vp);\n" +
+             "   float nDotViewPosition = max(0.0,dot(newNormal,vp));\n" +
+             "   diffuse = lightDiffuse * nDotViewPosition;\n" +
              "}\n" +
              "void main() {\n" +
              "   gl_Position = u_MVPMatrix * vec4(a_Position,1);\n" +
@@ -76,6 +80,7 @@ public class Sphere2 extends BaseShape {
              "   vec4 diffuseTemp=vec4(0.0,0.0,0.0,0.0);\n" +
              "   pointLight(normalize(a_Normal), diffuseTemp, u_LightLocation, vec4(0.8,0.8,0.8,1.0));\n" +
              "   v_Diffuse = diffuseTemp;\n" +
+             "   v_FragPosLightSpace = u_LightSpaceMatrix * u_MMatrix * vec4(a_Position,1);\n" +
              "}\n";
     private String mFragmentShader =
             "precision mediump float;\n" +
@@ -83,11 +88,24 @@ public class Sphere2 extends BaseShape {
             "varying vec2 v_TextureCoordinates;\n" +
             "varying vec4 v_Ambient;\n" +
             "varying vec4 v_Diffuse;\n" +
+            "varying vec4 v_FragPosLightSpace;\n" +
             "void main() {\n" +
             "   vec4 objectColor = texture2D(u_TextureUnit, v_TextureCoordinates);\n" +
-            "   gl_FragColor = (v_Diffuse + v_Ambient) * objectColor;\n" +
+//            "   float shadow = shadowCalculation(v_FragPosLightSpace);\n" +
+            "   float shadow = 0.0f;\n" +
+            "   gl_FragColor = (v_Ambient + (v_Diffuse * (1.0f - shadow))) * objectColor;\n" +
             "}\n";
 
+
+
+//    float shadowCalculation(vec4 fragPosLightSpace) {
+//        vec3 projCoords = fragPosLightSpace.xyz / fragPosLightSpace.w;
+//        projCoords = projCoords * 0.5 + 0.5;
+//        float closestDepth = texture2D(shadowMap, projCoords.xy).r;
+//        float currentDepth = projCoords.z;
+//        float shadow = currentDepth > closestDepth  ? 1.0 : 0.0;
+//        return shadow;
+//    }
     private int maPositionHandle;
     private int muColorHandle;
     private int muMVPMatrixHandle;
@@ -96,6 +114,8 @@ public class Sphere2 extends BaseShape {
     private int muMMatrixHandle;
     private int muLightLocationHandle;
     private int maNormalHandle;
+    private int muLightSpaceMatrixHandle;
+
 
     private float[] mVertexes;
     private short[] mIndexes;
@@ -111,6 +131,16 @@ public class Sphere2 extends BaseShape {
             1f, 1f,
     };
     private int mTextureID;
+
+
+    protected int mDepthProgram;
+    private int muDepthMMatrixHandle;
+    private int muDepthLightSpaceMatrixHandle;
+    private int maDepthPositionHandle;
+    protected float[] mDepthProjMatrix = new float[16];
+    protected float[] mDepthMMatrix = new float[16];
+    protected float[] mDepthVMatrix = new float[16];
+    protected float[] mDepthLightSpaceMatrix = new float[16];
 
     public Sphere2(Context context) {
         super(context);
@@ -142,7 +172,16 @@ public class Sphere2 extends BaseShape {
         checkGlError("glGetUniformLocation muLightLocationHandle");
         maNormalHandle = GLES20.glGetAttribLocation(mProgram, "a_Normal");
         checkGlError("glGetAttribLocation maNormalHandle");
+        muLightSpaceMatrixHandle = GLES20.glGetUniformLocation(mProgram, "u_LightSpaceMatrix");
+        checkGlError("glGetUniformLocation muLightSpaceMatrixHandle");
 
+        mDepthProgram = ShaderUtils.createProgram(mContext, R.raw.depth_vertex_shader, R.raw.depth_fragment_shader);
+        GLES20.glUseProgram(mDepthProgram);
+        muDepthMMatrixHandle = GLES20.glGetUniformLocation(mDepthProgram, "u_MMatrix");
+        muDepthLightSpaceMatrixHandle = GLES20.glGetUniformLocation(mDepthProgram, "u_LightSpaceMatrix");
+        maDepthPositionHandle = GLES20.glGetAttribLocation(mDepthProgram, A_POSITION);
+        checkGlError("glGetUniformLocation muDepthLightSpaceMatrixHandle, " + mDepthProgram);
+        GLES20.glUseProgram(mProgram);
 
         if (USE_GL_DRAW_ARRAYS) {
             initGlDrawArraysVertex();
@@ -326,33 +365,134 @@ public class Sphere2 extends BaseShape {
             return;
         }
 
+        renderDepthShader();
+
+        GLES20.glUseProgram(mProgram);
+        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0);
         GLES20.glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT | GLES20.GL_DEPTH_BUFFER_BIT);
 
         glActiveTexture(GLES20.GL_TEXTURE1);
         glBindTexture(GLES20.GL_TEXTURE_2D, mTextureID);
-        long time = SystemClock.uptimeMillis() % 10000L;
-        float angle = (360.0f / 10000.0f) * ((int) time);
-//        double test = (angle / 180) * Math.PI;
-        Matrix.setRotateM(mMMatrix, 0, angle, 0f, 1f, 0f);
-//        Matrix.setLookAtM(mVMatrix, 0, (float) (5 * Math.sin(test)), 0, (float) (5 * Math.cos(test)), 0, 0, 0, 0, 1, 0);
-        Matrix.multiplyMM(mMVPMatrix, 0, mVMatrix, 0, mMMatrix, 0);
-        Matrix.multiplyMM(mMVPMatrix, 0, mProjMatrix, 0, mMVPMatrix, 0);
-        GLES20.glUniformMatrix4fv(muMVPMatrixHandle, 1, false, mMVPMatrix, 0);
 
 
-        GLES20.glUniformMatrix4fv(muMMatrixHandle, 1, false, mMMatrix, 0);
         GLES20.glUniform3f(muLightLocationHandle, -4, 0, 1.5f);
 
         //将顶点法向量数据传入渲染管线
         GLES20.glVertexAttribPointer(maNormalHandle, 3, GLES30.GL_FLOAT, false, 3 * 4, mVertexFloatBuffer);
         GLES20.glEnableVertexAttribArray(maNormalHandle);// 启用顶点法向量数据数组
 
+        GLES20.glUniformMatrix4fv(muLightSpaceMatrixHandle, 1, false, mDepthLightSpaceMatrix, 0);
+        drawEarth();
+        checkGlError("glDrawElements");
+//        画多个地球
+//        Matrix.setIdentityM(mMMatrix, 0);
+//        Matrix.translateM(mMMatrix, 0, 0.7f, 0.7f, 1.5f);
+//        GLES20.glUniformMatrix4fv(muMMatrixHandle, 1, false, mMMatrix, 0);
+//        drawEarth(mMMatrix);
+
+
+    }
+
+    private void renderDepthShader() {
+
+        GLES20.glUseProgram(mDepthProgram);
+
+        // create FBO
+        int[] framebuffers = new int[1];
+        GLES20.glGenFramebuffers(1, framebuffers, 0);
+        int fboId = framebuffers[0];
+        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, fboId);
+        int fboTextureId = loadTexture(1, 1);
+        GLES20.glFramebufferTexture2D(GLES20.GL_FRAMEBUFFER, GLES20.GL_COLOR_ATTACHMENT0, GLES20.GL_TEXTURE_2D, fboTextureId, 0);
+        checkGlError("glFramebufferTexture2D");
+        // create RBO
+        int[] renderbuffer = new int[1];
+        GLES20.glGenRenderbuffers(1, renderbuffer, 0);
+        checkGlError("glGenRenderbuffers");
+        int renderBufferId = renderbuffer[0];
+        GLES20.glBindRenderbuffer(GLES20.GL_RENDERBUFFER, renderBufferId);
+        checkGlError("glBindRenderbuffer, " + renderBufferId);
+//        GLES20.glRenderbufferStorage(GLES20.GL_RENDERBUFFER, GLES20.GL_DEPTH_ATTACHMENT, 1, 1);
+        checkGlError("glRenderbufferStorage");
+
+        GLES20.glFramebufferRenderbuffer(GLES20.GL_FRAMEBUFFER, GLES20.GL_DEPTH_ATTACHMENT, GLES20.GL_RENDERBUFFER, renderBufferId);
+        checkGlError("glFramebufferRenderbuffer");
+        if (GLES20.glCheckFramebufferStatus(GLES20.GL_FRAMEBUFFER) != GLES20.GL_FRAMEBUFFER_COMPLETE) {
+            Log.d(TAG, "Framebuffer error");
+        }
+
+
+        GLES20.glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
+        GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT | GLES20.GL_DEPTH_BUFFER_BIT);
+
+        Matrix.orthoM(mDepthProjMatrix, 0, -1, 1, -1f, 1f, 0f, 10f);
+        // 光的位置
+        Matrix.setLookAtM(mDepthVMatrix, 0, -4, 0, 1.5f, 0, 0, 0, 0, 1, 0);
+        Matrix.multiplyMM(mDepthLightSpaceMatrix, 0, mDepthProjMatrix, 0, mDepthVMatrix, 0);
+        GLES20.glUniformMatrix4fv(muDepthLightSpaceMatrixHandle, 1, false, mDepthLightSpaceMatrix, 0);
+
+        long time = SystemClock.uptimeMillis() % 10000L;
+        float angle = (360.0f / 10000.0f) * ((int) time);
+        Matrix.setIdentityM(mDepthMMatrix, 0);
+        Matrix.setRotateM(mDepthMMatrix, 0, angle, 0f, 1f, 0f);
+        GLES20.glUniformMatrix4fv(muDepthMMatrixHandle, 1, false, mDepthMMatrix, 0);
+
+        mVertexFloatBuffer.position(0);
+        GLES20.glVertexAttribPointer(maDepthPositionHandle, 3, GLES20.GL_FLOAT, false, 0, mVertexFloatBuffer);
+        checkGlError("glVertexAttribPointer maDepthPositionHandle");
+        GLES20.glEnableVertexAttribArray(maDepthPositionHandle);
+        checkGlError("glEnableVertexAttribArray maDepthPositionHandle");
+        mVertexFloatBuffer.position(0);
+
         if (USE_GL_DRAW_ARRAYS) {
             glDrawArrays(GL_TRIANGLE_STRIP, 0, mVertexes.length / 3);
         } else {
             glDrawElements(GL_TRIANGLES, mIndexes.length, GL_UNSIGNED_SHORT, mIndexByteBuffer);
         }
-        checkGlError("glDrawElements");
+
+        GLES20.glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+        GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT | GLES20.GL_DEPTH_BUFFER_BIT);
+        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0);
+        // TODO 激活两个相同的texture单元为何不行
+        GLES20.glActiveTexture(GLES20.GL_TEXTURE0);
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, fboTextureId);
+
+        if (USE_GL_DRAW_ARRAYS) {
+            glDrawArrays(GL_TRIANGLE_STRIP, 0, mVertexes.length / 3);
+        } else {
+            glDrawElements(GL_TRIANGLES, mIndexes.length, GL_UNSIGNED_SHORT, mIndexByteBuffer);
+        }
+    }
+
+    private void drawEarth() {
+        long time = SystemClock.uptimeMillis() % 10000L;
+        float angle = (360.0f / 10000.0f) * ((int) time);
+        Matrix.setIdentityM(mMMatrix, 0);
+        Matrix.setRotateM(mMMatrix, 0, angle, 0f, 1f, 0f);
+        GLES20.glUniformMatrix4fv(muMMatrixHandle, 1, false, mMMatrix, 0);
+
+        Matrix.multiplyMM(mMVPMatrix, 0, mVMatrix, 0, mMMatrix, 0);
+        Matrix.multiplyMM(mMVPMatrix, 0, mProjMatrix, 0, mMVPMatrix, 0);
+        GLES20.glUniformMatrix4fv(muMVPMatrixHandle, 1, false, mMVPMatrix, 0);
+        if (USE_GL_DRAW_ARRAYS) {
+            glDrawArrays(GL_TRIANGLE_STRIP, 0, mVertexes.length / 3);
+        } else {
+            glDrawElements(GL_TRIANGLES, mIndexes.length, GL_UNSIGNED_SHORT, mIndexByteBuffer);
+        }
+    }
+
+    public static int loadTexture(int width, int height) {
+        int[] textures = new int[1];
+        GLES20.glGenTextures(1, textures, 0);
+        int textureId = textures[0];
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, textureId);
+        GLES20.glTexParameterf(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_NEAREST);
+        GLES20.glTexParameterf(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR);
+        GLES20.glTexParameterf(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_MIRRORED_REPEAT);
+        GLES20.glTexParameterf(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_MIRRORED_REPEAT);
+        GLES20.glTexImage2D(GLES20.GL_TEXTURE_2D, 0, GLES20.GL_RGB, width, height,
+                0, GLES20.GL_RGB, GLES20.GL_UNSIGNED_SHORT_5_6_5, null);
+        return textureId;
     }
 }
